@@ -5,7 +5,7 @@
 //
 // Quick start:
 //
-//	client := zuzoto.NewClient("http://localhost:8080",
+//	client := zuzoto.NewClient("https://api.zuzoto.ai",
 //	    zuzoto.WithAPIKey("your-api-key"),
 //	)
 //	result, err := client.Add(ctx, &zuzoto.AddInput{

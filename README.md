@@ -22,7 +22,7 @@ import (
 )
 
 func main() {
-	client := zuzoto.NewClient("http://localhost:8080",
+	client := zuzoto.NewClient("https://api.zuzoto.ai",
 		zuzoto.WithAPIKey("your-api-key"),
 	)
 
