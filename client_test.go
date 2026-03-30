@@ -347,3 +347,88 @@ func TestCustomHTTPClient(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDeleteMemory(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/memories/mem-1" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("mode") != "hard" {
+			t.Fatalf("expected mode=hard, got %s", r.URL.Query().Get("mode"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	client := zuzoto.NewClient(srv.URL)
+	err := client.Delete(context.Background(), "mem-1", zuzoto.DeleteModeHard)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRFC7807ErrorParsing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{
+			"type":     "https://zuzoto.dev/problems/validation-error",
+			"title":    "Validation Failed",
+			"status":   400,
+			"detail":   "mode: mode must be one of: soft, hard, gdpr",
+			"instance": "req-abc123",
+		})
+	}))
+	defer srv.Close()
+
+	client := zuzoto.NewClient(srv.URL)
+	_, err := client.Search(context.Background(), &zuzoto.SearchQuery{Text: "test"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	apiErr, ok := err.(*zuzoto.APIError)
+	if !ok {
+		t.Fatalf("expected APIError, got %T", err)
+	}
+	if apiErr.StatusCode != 400 {
+		t.Fatalf("expected 400, got %d", apiErr.StatusCode)
+	}
+	if apiErr.Type != "https://zuzoto.dev/problems/validation-error" {
+		t.Fatalf("expected problem type URI, got %q", apiErr.Type)
+	}
+	if apiErr.Instance != "req-abc123" {
+		t.Fatalf("expected instance, got %q", apiErr.Instance)
+	}
+	if apiErr.Message != "mode: mode must be one of: soft, hard, gdpr" {
+		t.Fatalf("expected detail message, got %q", apiErr.Message)
+	}
+}
+
+func TestBatchAddWithDetails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"results": []any{},
+			"total":   1,
+			"errors":  1,
+			"details": []map[string]any{
+				{"index": 1, "message": "content or messages required"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := zuzoto.NewClient(srv.URL)
+	result, err := client.BatchAdd(context.Background(), []*zuzoto.AddInput{
+		{Content: "good"},
+		{Content: ""},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Errors != 1 {
+		t.Fatalf("expected 1 error, got %d", result.Errors)
+	}
+	if len(result.Details) != 1 || result.Details[0].Index != 1 {
+		t.Fatalf("expected error detail for index 1, got %+v", result.Details)
+	}
+}

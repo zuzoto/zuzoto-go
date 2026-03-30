@@ -249,9 +249,16 @@ type ContextWindow struct {
 
 // BatchAddResult is returned from Client.BatchAdd.
 type BatchAddResult struct {
-	Results []AddResult `json:"results"`
-	Total   int         `json:"total"`
-	Errors  int         `json:"errors"`
+	Results []AddResult      `json:"results"`
+	Total   int              `json:"total"`
+	Errors  int              `json:"errors"`
+	Details []BatchItemError `json:"details,omitempty"`
+}
+
+// BatchItemError describes a single failure within a batch request.
+type BatchItemError struct {
+	Index   int    `json:"index"`
+	Message string `json:"message"`
 }
 
 // EntityState represents the state of an entity at a point in time.
@@ -286,6 +293,7 @@ type ListEntitiesOpts struct {
 
 // ListFactsOpts configures fact listing.
 type ListFactsOpts struct {
+	UserID         string
 	SubjectID      string
 	ObjectID       string
 	Predicate      string

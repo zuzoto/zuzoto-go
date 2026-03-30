@@ -86,6 +86,15 @@ func (c *Client) Update(ctx context.Context, id string, input *UpdateMemoryInput
 	return &mem, nil
 }
 
+// Delete removes a memory by ID.
+func (c *Client) Delete(ctx context.Context, id string, mode string) error {
+	params := url.Values{}
+	if mode != "" {
+		params.Set("mode", mode)
+	}
+	return c.del(ctx, "/v1/memories/"+url.PathEscape(id), params)
+}
+
 // Search runs hybrid search across memories.
 func (c *Client) Search(ctx context.Context, query *SearchQuery) (*SearchResult, error) {
 	// Build the API request body with scope and temporal from convenience fields.
@@ -275,6 +284,9 @@ func (c *Client) GetEntityTimeline(ctx context.Context, id string, from, to *tim
 func (c *Client) ListFacts(ctx context.Context, opts *ListFactsOpts) (*Page[Fact], error) {
 	params := url.Values{}
 	if opts != nil {
+		if opts.UserID != "" {
+			params.Set("user_id", opts.UserID)
+		}
 		if opts.SubjectID != "" {
 			params.Set("subject_id", opts.SubjectID)
 		}
@@ -414,10 +426,16 @@ func (c *Client) ListSessionEpisodes(ctx context.Context, sessionID string, opts
 // APIError is returned when the server responds with an error.
 type APIError struct {
 	StatusCode int
-	Message    string
+	Type       string // RFC 7807 problem type URI
+	Title      string // RFC 7807 short summary
+	Message    string // human-readable detail
+	Instance   string // request ID for debugging
 }
 
 func (e *APIError) Error() string {
+	if e.Instance != "" {
+		return fmt.Sprintf("zuzoto: HTTP %d: %s (instance: %s)", e.StatusCode, e.Message, e.Instance)
+	}
 	return fmt.Sprintf("zuzoto: HTTP %d: %s", e.StatusCode, e.Message)
 }
 
@@ -523,14 +541,37 @@ func (c *Client) decodeResponse(resp *http.Response, dst any) error {
 
 func (c *Client) readError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	msg := strings.TrimSpace(string(body))
-	// Try to extract the "error" field from JSON response.
+
+	// Try RFC 7807 ProblemDetail format first.
+	var problem struct {
+		Type     string `json:"type"`
+		Title    string `json:"title"`
+		Detail   string `json:"detail"`
+		Instance string `json:"instance"`
+	}
+	if json.Unmarshal(body, &problem) == nil && problem.Type != "" {
+		msg := problem.Detail
+		if msg == "" {
+			msg = problem.Title
+		}
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			Type:       problem.Type,
+			Title:      problem.Title,
+			Message:    msg,
+			Instance:   problem.Instance,
+		}
+	}
+
+	// Fallback: try {"error": "..."} format.
 	var errResp struct {
 		Error string `json:"error"`
 	}
 	if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
-		msg = errResp.Error
+		return &APIError{StatusCode: resp.StatusCode, Message: errResp.Error}
 	}
+
+	msg := strings.TrimSpace(string(body))
 	if msg == "" {
 		msg = http.StatusText(resp.StatusCode)
 	}
